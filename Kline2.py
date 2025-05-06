@@ -1,4 +1,5 @@
 import os
+import sys
 import struct
 import random
 from datetime import datetime
@@ -10,14 +11,24 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import mplfinance as mpf
 import pandas as pd
 
-# ==================== 全局配置 ====================
-FONT_PATH = 'C:/Windows/Fonts/msyh.ttc'          # 微软雅黑字体路径
-BASE_STOCK_PATH = r'G:\tdx'                      # 通达信数据根目录
-INITIAL_CAPITAL = 100000                         # 初始资金（元）
-SIMULATION_DAYS = 120                            # 模拟交易天数
-MA_PERIODS = [5, 10, 20, 60, 120, 250]           # 均线周期
-MA_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c',    # 均线颜色
-             '#d62728', '#9467bd', '#8c564b']
+# ==================== 动态路径配置 ====================
+def get_base_path():
+    """获取资源根目录"""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return base_path
+
+BASE_PATH = get_base_path()
+DATA_DIR = os.path.join(BASE_PATH, 'data')
+FONT_PATH = os.path.join(BASE_PATH, 'fonts', 'msyh.ttc')
+
+STOCK_PATHS = {
+    '沪市': os.path.join(DATA_DIR, 'sh'),
+    '深市': os.path.join(DATA_DIR, 'sz'),
+    '创业板': os.path.join(DATA_DIR, 'sz')
+}
 
 # ==================== 字体初始化 ====================
 try:
@@ -47,6 +58,12 @@ chart_style = mpf.make_mpf_style(
         'axes.labelsize': 10
     }
 )
+
+# ==================== 常量定义 ====================
+SIMULATION_DAYS = 120  # 模拟所需的天数，可根据需求调整
+INITIAL_CAPITAL = 100000  # 初始资金
+MA_PERIODS = [5, 10, 20]  # 移动平均线周期
+MA_COLORS = ['blue', 'orange', 'purple']  # 对应的颜色
 
 # ==================== 数据读取函数 ====================
 def read_day_file(file_path):
@@ -79,29 +96,32 @@ def read_day_file(file_path):
 class TradingSimulator:
     def __init__(self, master):
         self.master = master
-        self.master.title("股票交易模拟系统")
+        self.master.title("股票交易模拟系统 v1.0")
         self.master.geometry("1400x900")
         
         # 初始化状态变量
+        self.stock_pool = STOCK_PATHS  # 使用新的路径配置
+        self._verify_data_dirs()
         self.current_data = pd.DataFrame()
         self.current_index = 64       # 显示65根K线
-        self.cash = INITIAL_CAPITAL
+        self.cash = 100000
         self.position = 0
         self.trade_log = []
-        self.equity_curve = [INITIAL_CAPITAL]
+        self.equity_curve = [100000]
         self.buy_signals = pd.DataFrame(columns=['Price'])
         self.sell_signals = pd.DataFrame(columns=['Price'])
         
-        # 股票数据路径
-        self.stock_pool = {
-            "沪市": os.path.join(BASE_STOCK_PATH, "vipdoc", "sh", "lday"),
-            "深市": os.path.join(BASE_STOCK_PATH, "vipdoc", "sz", "lday"),
-            "创业板": os.path.join(BASE_STOCK_PATH, "vipdoc", "sz", "lday")
-        }
-        
         # 初始化界面
         self._init_ui()
-        self._init_chart_components()  # 初始化图表组件
+        self._init_chart_components()
+
+    def _verify_data_dirs(self):
+        """验证数据目录结构"""
+        for market, path in STOCK_PATHS.items():
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"缺失{market}数据目录: {path}")
+            if len(os.listdir(path)) == 0:
+                raise ValueError(f"{market}数据目录为空: {path}")
 
     def _init_ui(self):
         """初始化用户界面"""
@@ -113,7 +133,7 @@ class TradingSimulator:
         ttk.Label(control_frame, text="选择市场:").pack(side=tk.LEFT)
         self.market_var = tk.StringVar()
         market_combo = ttk.Combobox(control_frame, textvariable=self.market_var, 
-                                   values=list(self.stock_pool.keys()), width=8)
+                                   values=list(STOCK_PATHS.keys()), width=8)
         market_combo.pack(side=tk.LEFT, padx=5)
         
         # 操作按钮
@@ -132,23 +152,21 @@ class TradingSimulator:
         self.chart_frame.pack(fill=tk.BOTH, expand=True)
 
     def _init_chart_components(self):
-        """初始化图表组件（解决闪烁问题的关键）"""
-        # 创建持久的Figure和Axes
+        """初始化图表组件"""
         self.fig = mpf.figure(style=chart_style, figsize=(13, 8))
         self.ax_price = self.fig.add_subplot(2, 1, 1)
         self.ax_volume = self.fig.add_subplot(2, 1, 2, sharex=self.ax_price)
         
-        # 创建Canvas并固定布局
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.chart_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        self.fig.set_tight_layout(True)  # 优化布局
-        self._draw_placeholder()  # 初始绘制空图表
+        self.fig.set_tight_layout(True)
+        self._draw_placeholder()
 
     def _draw_placeholder(self):
-        """绘制初始占位图表"""
+        """绘制初始占位"""
         self.ax_price.clear()
         self.ax_volume.clear()
-        self.ax_price.text(0.5, 0.5, '等待数据加载...', 
+        self.ax_price.text(0.5, 0.5, '请点击"开始模拟"加载数据', 
                           ha='center', va='center', fontsize=16)
         self.canvas.draw()
 
@@ -363,11 +381,11 @@ class TradingSimulator:
         messagebox.showinfo("模拟统计", "\n".join(result))
 
 if __name__ == "__main__":
-    root = tk.Tk()
     try:
-        # 设置全局字体
+        root = tk.Tk()
         root.option_add("*Font", (plt.rcParams['font.sans-serif'][0], 10))
+        app = TradingSimulator(root)
+        root.mainloop()
     except Exception as e:
-        print(f"界面字体设置失败: {str(e)}")
-    app = TradingSimulator(root)
-    root.mainloop()
+        messagebox.showerror("致命错误", f"程序初始化失败:\n{str(e)}")
+        sys.exit(1)
